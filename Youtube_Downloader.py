@@ -1,61 +1,164 @@
+import os
 from pathlib import Path
 from time import sleep
-from tkinter import StringVar, Tk
-from tkinter.ttk import Label, Button, Entry, Combobox
-from typing import BinaryIO
+from tkinter import IntVar, StringVar, Tk
+from tkinter.ttk import Label, Button, Entry, Combobox, Radiobutton
 from pytube import YouTube, exceptions
+from threading import Thread
+
+global download_button
+global quality_menu
+global url_field
+radio_buttons = []
 
 
-def download_from_youtube(quality, video):
+def disable_UI_element(element):
+    element.config(state="disabled")
 
-    video = video.streams.filter(
+
+def enable_UI_element(element):
+    element.config(state="active")
+
+
+def download_video_from_youtube(quality, video):
+
+    disable_UI_element(download_button)
+    quality_menu.destroy()
+    disable_UI_element(url_field)
+
+    video.streams.filter(
         progressive=True, file_extension="mp4", res=quality
-    ).first()
-    video.download(f"{Path.home()}/Downloads")
+    ).first().download(f"{Path.home()}/Downloads")
 
     good = Label(window, text="Downloaded", font=("jost", 15))
     good.place(x=300, y=60, anchor="center")
     good.after(3000, good.destroy)
 
-    global download_button
-    download_button.config(state="disabled")
+    enable_UI_element(url_field)
 
 
-def selecting_video_quality(url):
+def download_audio_from_youtube(audio):
+    disable_UI_element(download_button)
+    try:
+        if quality_menu.winfo_exists():
+            quality_menu.destroy()
+    except:
+        pass
+    disable_UI_element(url_field)
+
+    for button in radio_buttons:
+        button.destroy()
+
+    file = (
+        audio.streams.filter(only_audio=True)
+        .first()
+        .download(f"{Path.home()}/Downloads")
+    )
+    try:
+        base, ext = os.path.splitext(file)
+        new_file = base + ".mp3"
+        os.rename(file, new_file)
+    except FileExistsError:
+        base, ext = os.path.splitext(file)
+        new_file = base + ".mp3"
+        os.remove(new_file)
+        os.rename(file, new_file)
+
+    good = Label(window, text="Downloaded", font=("jost", 15))
+    good.place(x=300, y=60, anchor="center")
+    good.after(3000, good.destroy)
+
+    enable_UI_element(url_field)
+
+
+def selecting_file_quality(url):
+    video = YouTube(url, on_progress_callback=on_progress)
+    options = []
+
+    for quality in video.streams.order_by("resolution").filter(
+        progressive=True, file_extension="mp4"
+    ):
+        options.append(quality.resolution)
+    options = list(dict.fromkeys(options))
+
+    global quality_menu
+    quality_menu = Combobox(window, values=options, font=(10), state="readonly")
+    quality_menu.place(x=475, y=150, anchor="center", width=130)
+    quality_menu.set("")
+
+    quality = quality_menu.get()
+    enable_UI_element(download_button)
+    download_button.config(
+        command=lambda: Thread(
+            target=download_video_from_youtube,
+            args=(
+                (
+                    quality,
+                    video,
+                )
+            ),
+        ).start()
+    )
+
+
+def getting_type(url):
     if check_for_exceptions(url):
-        video = YouTube(url""", on_progress_callback=progress_function""")
-        options = []
-
-        for quality in video.streams.order_by("resolution").filter(
-            progressive=True, file_extension="mp4"
-        ):
-            options.append(quality.resolution)
-        options = list(dict.fromkeys(options))
-
-        quality_menu = Combobox(window, values=options, font=(10), state="readonly")
-        quality_menu.place(x=475, y=90, anchor="center", width=130)
-        quality_menu.set("Select quality")
-
-        global download_button
-        download_button.config(
-            state="active",
-            command=lambda: download_from_youtube(quality_menu.get(), video),
+        global radio_buttons
+        r1 = Radiobutton(
+            window,
+            value="mp3",
+            command=lambda: audio_download_button(url),
+            text="mp3",
         )
+        r1.place(x=475, y=90)
+        radio_buttons.append(r1)
+
+        r2 = Radiobutton(
+            window,
+            value="mp4",
+            command=lambda: Thread(target=selecting_file_quality, args=(url,)).start(),
+            text="mp4",
+        )
+        r2.place(x=475, y=110)
+        radio_buttons.append(r2)
 
 
-def progress_function(stream, chunk: bytes, bytes_remaining: int):
+def audio_download_button(url):
+    try:
+        if quality_menu.winfo_exists():
+            quality_menu.destroy()
+    except:
+        pass
+    audio = YouTube(url, on_progress_callback=on_progress)
+    enable_UI_element(download_button)
+    download_button.config(
+        command=lambda: Thread(
+            target=download_audio_from_youtube,
+            args=((audio,)),
+        ).start()
+    )
 
+
+def on_progress(stream, chunk: bytes, bytes_remaining: int):
+    try:
+        if progress.winfo_exists():
+            progress.destroy()
+    except UnboundLocalError:
+        pass
     size = stream.filesize
-    while bytes_remaining <= size:
-        """progress = Label(window, text=f"{p}% completed", font=("jost", 15))
-        progress.place(x=20, y=90, anchor="center")
-        progress.after(300, progress.destroy)"""
+    progress = Label(
+        window,
+        text=f"{percent(size - bytes_remaining, size)}% completed",
+        font=("jost", 15),
+    )
+    progress.place(x=100, y=150, anchor="center")
+    if progress.cget("text") == f"100% completed":
         sleep(1)
-        print(f"{bytes_remaining} out of {size}")
+        progress.destroy()
 
 
 def percent(tem, total):
-    perc = (float(tem) / float(total)) * float(100)
+    perc = int((float(tem) / float(total)) * float(100))
     return perc
 
 
@@ -76,19 +179,25 @@ def set_up():
     label.place(anchor="s")
     label.pack()
     sv = StringVar()
-    sv.trace("w", lambda name, index, mode, sv=sv: selecting_video_quality(sv.get()))
+    sv.trace(
+        "w",
+        lambda name, index, mode, sv=sv: Thread(
+            target=getting_type,
+            args=(sv.get(),),
+        ).start(),
+    )
+    global url_field
     url_field = Entry(window, width=45, textvariable=sv)
     url_field.place(x=20, y=90, anchor="w")
 
     global download_button
     download_button = Button(window, text="Download", state="disabled")
-    download_button.place(x=475, y=140, anchor="center")
-    window.mainloop()
+    download_button.place(x=475, y=200, anchor="center")
 
 
 window = Tk()
 window.title("Youtube Downloader")
-window.geometry("550x180")
+window.geometry("550x230")
 window.resizable(False, False)
 set_up()
 window.mainloop()
